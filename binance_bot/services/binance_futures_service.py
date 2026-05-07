@@ -518,3 +518,100 @@ class BinanceFuturesService:
             orig_qty=_decimal(payload.get("origQty"), _normalize_decimal(normalized_quantity)),
             executed_qty=_decimal(payload.get("executedQty"), "0"),
         )
+
+    async def create_aggressive_limit_order(
+        self,
+        symbol: str,
+        side: str,
+        quantity: Decimal,
+        reduce_only: bool,
+        dry_run: bool,
+        max_attempts: int = 3,
+        market_fallback: bool = False,
+    ) -> OrderExecution | None:
+        rules = await self.get_symbol_rules(symbol)
+        normalized_quantity = self.normalize_quantity(rules, quantity)
+        remaining_quantity = normalized_quantity
+        if remaining_quantity <= 0:
+            return None
+
+        total_executed_qty = Decimal("0")
+        total_notional = Decimal("0")
+        last_price = Decimal("0")
+        price_buffers = (
+            (Decimal("0.0002"), Decimal("0.0003"), Decimal("0.0005"), Decimal("0.0007"), Decimal("0.0010"))
+            if reduce_only
+            else (Decimal("0.0002"), Decimal("0.0005"), Decimal("0.0010"))
+        )
+        max_attempts = min(max_attempts, len(price_buffers))
+
+        for attempt in range(max_attempts):
+            if remaining_quantity <= 0:
+                break
+
+            ask_price, bid_price = await self.get_book_ticker(symbol)
+            reference_price = ask_price if side == "BUY" else bid_price
+            if reference_price <= 0:
+                reference_price = await self.get_mark_price(symbol)
+            if reference_price <= 0:
+                continue
+
+            buffer = price_buffers[min(attempt, len(price_buffers) - 1)]
+            limit_price = reference_price * (Decimal("1") + buffer) if side == "BUY" else reference_price * (Decimal("1") - buffer)
+            execution = await self.create_limit_order(
+                symbol=symbol,
+                side=side,
+                quantity=remaining_quantity,
+                price=limit_price,
+                reduce_only=reduce_only,
+                dry_run=dry_run,
+            )
+            if execution is None or execution.executed_qty <= 0:
+                if not dry_run and attempt < (max_attempts - 1):
+                    await asyncio.sleep(0.15)
+                continue
+
+            executed_qty = min(remaining_quantity, execution.executed_qty)
+            total_executed_qty += executed_qty
+            total_notional += executed_qty * execution.avg_price
+            last_price = execution.avg_price
+            remaining_quantity = self.normalize_quantity(rules, remaining_quantity - executed_qty)
+
+            if remaining_quantity > 0 and not dry_run and attempt < (max_attempts - 1):
+                await asyncio.sleep(0.15)
+
+        if remaining_quantity > 0 and market_fallback:
+            self.logger.warning(
+                "IOC 지정가 미체결 잔량을 시장가로 전환합니다: symbol=%s side=%s remaining_qty=%s reduce_only=%s",
+                symbol,
+                side,
+                _normalize_decimal(remaining_quantity),
+                reduce_only,
+            )
+            fallback_execution = await self.create_market_order(
+                symbol=symbol,
+                side=side,
+                quantity=remaining_quantity,
+                reduce_only=reduce_only,
+                dry_run=dry_run,
+            )
+            if fallback_execution is not None and fallback_execution.executed_qty > 0:
+                fallback_qty = min(remaining_quantity, fallback_execution.executed_qty)
+                total_executed_qty += fallback_qty
+                total_notional += fallback_qty * fallback_execution.avg_price
+                last_price = fallback_execution.avg_price
+                remaining_quantity = self.normalize_quantity(rules, remaining_quantity - fallback_qty)
+
+        if total_executed_qty <= 0:
+            return None
+
+        average_price = total_notional / total_executed_qty if total_executed_qty > 0 else last_price
+        return OrderExecution(
+            order_id=f"ioc-limit-{symbol}-{side}-{int(time.time())}",
+            status="FILLED" if remaining_quantity <= 0 else "PARTIALLY_FILLED",
+            side=side,
+            price=last_price,
+            avg_price=average_price,
+            orig_qty=normalized_quantity,
+            executed_qty=total_executed_qty,
+        )

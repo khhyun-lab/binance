@@ -6,12 +6,13 @@ import signal
 from decimal import Decimal
 
 from binance_bot.config import Settings
+from binance_bot.heartbeat import HeartbeatWriter
+from binance_bot.logging_utils import LOG_SCHEMA_VERSION
+from binance_bot.market_data import LiveBinanceMarketDataProvider
 from binance_bot.services.binance_futures_service import BinanceFuturesService
 from binance_bot.state import StateStore
 from binance_bot.strategy import StrategyEngine
-from upbit_bot.heartbeat import HeartbeatWriter
-from upbit_bot.logging_utils import LOG_SCHEMA_VERSION
-from upbit_bot.telegram import TelegramNotifier, format_telegram_message
+from binance_bot.telegram import TelegramNotifier, format_telegram_message
 
 
 class BinanceFuturesApp:
@@ -216,7 +217,7 @@ class BinanceFuturesApp:
             await self._apply_live_fee_rate(service)
             strategy = StrategyEngine(
                 settings=self.settings,
-                service=service,
+                service=LiveBinanceMarketDataProvider(service),
                 state_store=self.state_store,
                 notifier=self.notifier,
                 heartbeat=self.heartbeat,
@@ -226,7 +227,15 @@ class BinanceFuturesApp:
                     await strategy.run_cycle()
                     return
                 while not self.stop_event.is_set():
-                    await strategy.run_cycle()
+                    try:
+                        await strategy.run_cycle()
+                    except Exception as exc:
+                        self.heartbeat.touch("cycle-error")
+                        self.logger.exception("Binance 선물 사이클 예외로 계속 진행합니다: %s", exc)
+                        if self.stop_event.is_set():
+                            break
+                        await asyncio.sleep(min(5, max(1, self.settings.exit_monitor_seconds)))
+                        continue
                     wait_elapsed = 0
                     self.logger.info("Binance 다음 사이클까지 대기 seconds=%s", self.settings.cycle_seconds)
                     while wait_elapsed < self.settings.cycle_seconds and not self.stop_event.is_set():
@@ -243,7 +252,12 @@ class BinanceFuturesApp:
                                 and self.settings.exit_monitor_seconds > 0
                                 and self.state_store.positions
                             ):
-                                await strategy.run_exit_monitor_cycle()
+                                try:
+                                    await strategy.run_exit_monitor_cycle()
+                                except Exception as exc:
+                                    self.heartbeat.touch("exit-monitor-error")
+                                    self.logger.exception("Binance 청산 감시 예외로 계속 진행합니다: %s", exc)
+                                    break
             finally:
                 self.heartbeat.touch("stopped")
                 self.logger.info("Binance 선물 봇 종료")

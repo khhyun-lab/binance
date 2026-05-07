@@ -6,7 +6,7 @@ import logging
 
 from binance_bot.app import BinanceFuturesApp
 from binance_bot.config import load_settings
-from upbit_bot.logging_utils import setup_logging
+from binance_bot.logging_utils import setup_logging
 
 
 def parse_args() -> argparse.Namespace:

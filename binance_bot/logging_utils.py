@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import logging
 import os
-from pathlib import Path
 from logging.handlers import TimedRotatingFileHandler
+from pathlib import Path
 
 
 LOG_SCHEMA_VERSION = "2026-04-30-3m-v2"
@@ -33,12 +33,8 @@ def setup_logging(log_dir: Path, log_level: str, log_filename: str = "bot.log") 
     logging.basicConfig(
         level=getattr(logging, log_level, logging.INFO),
         format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
-        handlers=[
-            file_handler,
-            console_handler,
-        ],
+        handlers=[file_handler, console_handler],
         force=True,
     )
 
     logging.getLogger("httpx").setLevel(logging.WARNING)
-    logging.getLogger("upbit._base_client").setLevel(logging.WARNING)
