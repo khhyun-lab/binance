@@ -88,6 +88,78 @@ def _build_pullback_snapshot(side: str = "LONG") -> MarketSnapshot:
     )
 
 
+def _build_breakout_snapshot(side: str = "LONG") -> MarketSnapshot:
+    if side == "LONG":
+        return MarketSnapshot(
+            symbol="BTCUSDT",
+            mark_price=Decimal("101.10"),
+            ask_price=Decimal("101.10"),
+            bid_price=Decimal("101.10"),
+            latest_close_1m=Decimal("101.10"),
+            previous_close_1m=Decimal("101.00"),
+            previous_high_1m=Decimal("101.10"),
+            previous_low_1m=Decimal("100.80"),
+            recent_three_highs_1m=(Decimal("100.90"), Decimal("101.00"), Decimal("101.20")),
+            recent_three_lows_1m=(Decimal("100.60"), Decimal("100.80"), Decimal("100.90")),
+            ema_fast_1m=Decimal("100.95"),
+            ema_slow_1m=Decimal("100.70"),
+            long_score=7,
+            short_score=0,
+            long_reasons=["trend"],
+            short_reasons=[],
+            volume_ratio=Decimal("1.80"),
+            rsi_1m=Decimal("63"),
+            rsi_3m=Decimal("60"),
+            atr_3m=Decimal("1.00"),
+            atr_15m=Decimal("1.20"),
+            recent_high=Decimal("101.20"),
+            recent_low=Decimal("100.60"),
+            breakout_high=Decimal("101.00"),
+            breakout_low=Decimal("99.80"),
+            trend_long_ok=True,
+            trend_short_ok=False,
+            latest_close_time_ms=1_700_000_000_000,
+            recent_closes_1m=(Decimal("100.20"), Decimal("100.40"), Decimal("100.60"), Decimal("100.80"), Decimal("101.00"), Decimal("101.00"), Decimal("101.10")),
+            recent_highs_window_1m=(Decimal("100.30"), Decimal("100.50"), Decimal("100.70"), Decimal("100.90"), Decimal("101.00"), Decimal("101.10"), Decimal("101.20")),
+            recent_lows_window_1m=(Decimal("100.00"), Decimal("100.20"), Decimal("100.40"), Decimal("100.50"), Decimal("100.70"), Decimal("100.80"), Decimal("100.90")),
+            recent_volumes_1m=(Decimal("1"), Decimal("1"), Decimal("1"), Decimal("1.2"), Decimal("1.3"), Decimal("1.4"), Decimal("1.8")),
+        )
+    return MarketSnapshot(
+        symbol="BTCUSDT",
+        mark_price=Decimal("98.90"),
+        ask_price=Decimal("98.90"),
+        bid_price=Decimal("98.90"),
+        latest_close_1m=Decimal("98.90"),
+        previous_close_1m=Decimal("99.00"),
+        previous_high_1m=Decimal("99.20"),
+        previous_low_1m=Decimal("98.90"),
+        recent_three_highs_1m=(Decimal("99.30"), Decimal("99.10"), Decimal("99.00")),
+        recent_three_lows_1m=(Decimal("99.10"), Decimal("99.00"), Decimal("98.80")),
+        ema_fast_1m=Decimal("98.95"),
+        ema_slow_1m=Decimal("99.15"),
+        long_score=0,
+        short_score=7,
+        long_reasons=[],
+        short_reasons=["trend"],
+        volume_ratio=Decimal("1.70"),
+        rsi_1m=Decimal("41"),
+        rsi_3m=Decimal("40"),
+        atr_3m=Decimal("1.00"),
+        atr_15m=Decimal("1.20"),
+        recent_high=Decimal("99.30"),
+        recent_low=Decimal("98.80"),
+        breakout_high=Decimal("100.20"),
+        breakout_low=Decimal("99.00"),
+        trend_long_ok=False,
+        trend_short_ok=True,
+        latest_close_time_ms=1_700_000_000_000,
+        recent_closes_1m=(Decimal("99.80"), Decimal("99.60"), Decimal("99.40"), Decimal("99.20"), Decimal("99.00"), Decimal("99.00"), Decimal("98.90")),
+        recent_highs_window_1m=(Decimal("99.90"), Decimal("99.70"), Decimal("99.50"), Decimal("99.30"), Decimal("99.20"), Decimal("99.10"), Decimal("99.00")),
+        recent_lows_window_1m=(Decimal("99.60"), Decimal("99.40"), Decimal("99.20"), Decimal("99.10"), Decimal("99.00"), Decimal("98.90"), Decimal("98.80")),
+        recent_volumes_1m=(Decimal("1"), Decimal("1"), Decimal("1"), Decimal("1.2"), Decimal("1.3"), Decimal("1.4"), Decimal("1.7")),
+    )
+
+
 def test_pullback_reaccel_long_candidate_detected() -> None:
     adapter = BacktestStrategyAdapter(HistoricalMarketDataProvider({}), ["BTCUSDT"], leverage=7, margin_per_trade=Decimal("20"))
     candidate = adapter._evaluate_pullback_reaccel_candidate(_build_pullback_snapshot("LONG"), "LONG")
@@ -156,6 +228,34 @@ def test_pullback_reaccel_min_rr_guard() -> None:
     decision = asyncio.run(adapter._plan_entry(snapshot, account_snapshot))
     assert decision.allowed is False
     assert decision.reason == "pullback_min_rr_blocked"
+
+
+def test_breakout_short_is_blocked_by_default() -> None:
+    adapter = BacktestStrategyAdapter(HistoricalMarketDataProvider({}), ["BTCUSDT"], leverage=7, margin_per_trade=Decimal("20"))
+    snapshot = _build_breakout_snapshot("SHORT")
+    account_snapshot = AccountSnapshot(available_balance=Decimal("1000"), wallet_balance=Decimal("1000"), max_withdraw_amount=Decimal("1000"))
+    decision = asyncio.run(adapter._plan_entry(snapshot, account_snapshot))
+    assert decision.allowed is False
+    assert decision.reason == "breakout_side_disabled"
+
+
+def test_breakout_long_blocks_overheated_rsi() -> None:
+    adapter = BacktestStrategyAdapter(HistoricalMarketDataProvider({}), ["BTCUSDT"], leverage=7, margin_per_trade=Decimal("20"))
+    snapshot = replace(_build_breakout_snapshot("LONG"), rsi_3m=Decimal("66"))
+    account_snapshot = AccountSnapshot(available_balance=Decimal("1000"), wallet_balance=Decimal("1000"), max_withdraw_amount=Decimal("1000"))
+    decision = asyncio.run(adapter._plan_entry(snapshot, account_snapshot))
+    assert decision.allowed is False
+    assert decision.reason == "breakout_long_rsi_too_high"
+
+
+def test_breakout_long_allows_tempered_extension() -> None:
+    adapter = BacktestStrategyAdapter(HistoricalMarketDataProvider({}), ["BTCUSDT"], leverage=7, margin_per_trade=Decimal("20"))
+    snapshot = _build_breakout_snapshot("LONG")
+    account_snapshot = AccountSnapshot(available_balance=Decimal("1000"), wallet_balance=Decimal("1000"), max_withdraw_amount=Decimal("1000"))
+    decision = asyncio.run(adapter._plan_entry(snapshot, account_snapshot))
+    assert decision.allowed is True
+    assert decision.plan is not None
+    assert decision.plan.reason == "breakout_chase_long"
 
 
 def test_decision_log_contains_entry_blockers() -> None:

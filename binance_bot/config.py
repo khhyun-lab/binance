@@ -52,6 +52,9 @@ class Settings:
     entry_momentum_min_conditions: int
     entry_min_volume_ratio: Decimal
     long_entry_min_rsi_3m: Decimal
+    long_breakout_max_rsi_3m: Decimal
+    breakout_max_extension_atr: Decimal
+    breakout_short_enabled: bool
     short_entry_max_rsi_3m: Decimal
     pullback_reaccel_enabled: bool
     pullback_lookback_candles: int
@@ -136,6 +139,9 @@ def load_settings() -> Settings:
         entry_momentum_min_conditions=max(1, _to_int(os.getenv("BINANCE_FUTURES_ENTRY_MOMENTUM_MIN_CONDITIONS"), 2)),
         entry_min_volume_ratio=_to_decimal(os.getenv("BINANCE_FUTURES_ENTRY_MIN_VOLUME_RATIO"), "1.15"),
         long_entry_min_rsi_3m=_to_decimal(os.getenv("BINANCE_FUTURES_LONG_ENTRY_MIN_RSI_3M"), "58"),
+        long_breakout_max_rsi_3m=_to_decimal(os.getenv("BINANCE_FUTURES_LONG_BREAKOUT_MAX_RSI_3M"), "65"),
+        breakout_max_extension_atr=_to_decimal(os.getenv("BINANCE_FUTURES_BREAKOUT_MAX_EXTENSION_ATR"), "0.22"),
+        breakout_short_enabled=_to_bool(os.getenv("BINANCE_FUTURES_BREAKOUT_SHORT_ENABLED"), False),
         short_entry_max_rsi_3m=_to_decimal(os.getenv("BINANCE_FUTURES_SHORT_ENTRY_MAX_RSI_3M"), "44"),
         pullback_reaccel_enabled=_to_bool(os.getenv("BINANCE_FUTURES_PULLBACK_REACCEL_ENABLED"), True),
         pullback_lookback_candles=max(5, _to_int(os.getenv("BINANCE_FUTURES_PULLBACK_LOOKBACK_CANDLES"), 20)),

@@ -61,6 +61,13 @@ class EntryCandidate:
 
 
 class EntryMixin:
+    def _breakout_extension_atr(self, snapshot: MarketSnapshot, side: str) -> Decimal:
+        if snapshot.atr_3m <= 0:
+            return Decimal("0")
+        if side == "LONG":
+            return max(Decimal("0"), (snapshot.mark_price - snapshot.breakout_high) / snapshot.atr_3m)
+        return max(Decimal("0"), (snapshot.breakout_low - snapshot.mark_price) / snapshot.atr_3m)
+
     def _score_edge_for_side(self, snapshot: MarketSnapshot, side: str) -> int:
         if side == "LONG":
             return snapshot.long_score - snapshot.short_score
@@ -372,6 +379,17 @@ class EntryMixin:
             and snapshot.volume_ratio >= max(self.settings.entry_min_volume_ratio, Decimal("1.35"))
         )
 
+    def _post_filter_breakout_candidate(self, snapshot: MarketSnapshot, candidate: EntryCandidate) -> str | None:
+        if not candidate.entry_type.startswith("breakout_chase"):
+            return None
+        if candidate.side == "SHORT" and not self.settings.breakout_short_enabled:
+            return "breakout_side_disabled"
+        if candidate.side == "LONG" and snapshot.rsi_3m > self.settings.long_breakout_max_rsi_3m:
+            return "breakout_long_rsi_too_high"
+        if candidate.side == "LONG" and self._breakout_extension_atr(snapshot, "LONG") > self.settings.breakout_max_extension_atr:
+            return "breakout_overextended"
+        return None
+
     def _has_entry_momentum(self, snapshot: MarketSnapshot, side: str) -> bool:
         threshold = self._entry_score_threshold_for_side(side)
         if side == "LONG":
@@ -480,6 +498,15 @@ class EntryMixin:
             return PlanDecision(
                 allowed=False,
                 reason=self._entry_block_reason(selected_candidate),
+                detail_reasons=selected_candidate.detail_reasons,
+                metadata=selected_candidate.to_metadata(preferred_side),
+            )
+        breakout_post_filter_reason = self._post_filter_breakout_candidate(snapshot, selected_candidate)
+        if breakout_post_filter_reason is not None:
+            selected_candidate.blockers.append(breakout_post_filter_reason)
+            return PlanDecision(
+                allowed=False,
+                reason=breakout_post_filter_reason,
                 detail_reasons=selected_candidate.detail_reasons,
                 metadata=selected_candidate.to_metadata(preferred_side),
             )
