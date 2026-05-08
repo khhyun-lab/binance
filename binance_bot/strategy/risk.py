@@ -90,6 +90,11 @@ class RiskMixin:
         commission_usdt: Decimal = Decimal("0"),
         last_exit_update_at: str = "",
         last_trade_sync_at: str = "",
+        entry_type: str = "breakout_chase",
+        breakout_level: Decimal = Decimal("0"),
+        pullback_low: Decimal = Decimal("0"),
+        pullback_high: Decimal = Decimal("0"),
+        invalidation_deadline_ms: int = 0,
     ) -> Position:
         return Position(
             symbol=symbol,
@@ -109,6 +114,11 @@ class RiskMixin:
             commission_usdt=str(commission_usdt),
             last_exit_update_at=last_exit_update_at,
             last_trade_sync_at=last_trade_sync_at,
+            entry_type=entry_type,
+            breakout_level=str(breakout_level),
+            pullback_low=str(pullback_low),
+            pullback_high=str(pullback_high),
+            invalidation_deadline_ms=invalidation_deadline_ms,
             trend_follow_armed=False,
             entry_count=entry_count,
             exit_count=exit_count,
@@ -255,6 +265,11 @@ class RiskMixin:
             commission_usdt=str(commission_usdt),
             last_exit_update_at=position.last_exit_update_at,
             last_trade_sync_at=synced_at,
+            entry_type=position.entry_type,
+            breakout_level=position.breakout_level,
+            pullback_low=position.pullback_low,
+            pullback_high=position.pullback_high,
+            invalidation_deadline_ms=position.invalidation_deadline_ms,
             trend_follow_armed=position.trend_follow_armed,
             entry_count=position.entry_count,
             exit_count=position.exit_count,
@@ -414,6 +429,11 @@ class RiskMixin:
                     commission_usdt=existing.commission_usdt,
                     last_exit_update_at=existing.last_exit_update_at,
                     last_trade_sync_at=existing.last_trade_sync_at,
+                    entry_type=existing.entry_type,
+                    breakout_level=existing.breakout_level,
+                    pullback_low=existing.pullback_low,
+                    pullback_high=existing.pullback_high,
+                    invalidation_deadline_ms=existing.invalidation_deadline_ms,
                     trend_follow_armed=existing.trend_follow_armed,
                     entry_count=normalized_entry_count,
                     exit_count=normalized_exit_count,
@@ -440,12 +460,21 @@ class RiskMixin:
                 notional_usdt=str(abs(position.quantity) * position.entry_price),
                 realized_pnl_usdt="0",
                 commission_usdt="0",
+                entry_type="breakout_chase",
                 entry_count=1,
                 exit_count=0,
             )
             self.state_store.set(synced)
 
-    def _calculate_exit_lines(self, snapshot: MarketSnapshot, side: str, entry_price: Decimal, leverage: int, position: Position | None = None) -> tuple[Decimal, Decimal, Decimal, Decimal]:
+    def _calculate_exit_lines(
+        self,
+        snapshot: MarketSnapshot,
+        side: str,
+        entry_price: Decimal,
+        leverage: int,
+        position: Position | None = None,
+        entry_metadata: dict[str, str | int | bool | list[str]] | None = None,
+    ) -> tuple[Decimal, Decimal, Decimal, Decimal]:
         atr_fast = snapshot.atr_3m
         atr_slow = snapshot.atr_15m
         atr_base = (atr_fast * Decimal("0.7")) + (atr_slow * Decimal("0.3"))
@@ -457,6 +486,46 @@ class RiskMixin:
             effective_min_stop_loss_pct,
             effective_max_stop_loss_pct,
         ) = self._effective_exit_target_bounds(snapshot, side)
+        effective_entry_type = position.entry_type if position is not None else str((entry_metadata or {}).get("entry_type", "breakout_chase"))
+        metadata_breakout_level = Decimal(str((entry_metadata or {}).get("breakout_level", "0")))
+        metadata_pullback_low = Decimal(str((entry_metadata or {}).get("pullback_low", "0")))
+        metadata_pullback_high = Decimal(str((entry_metadata or {}).get("pullback_high", "0")))
+
+        if effective_entry_type.startswith("pullback_reaccel"):
+            pullback_low = position.pullback_low_decimal if position is not None else metadata_pullback_low
+            pullback_high = position.pullback_high_decimal if position is not None else metadata_pullback_high
+            breakout_level = position.breakout_level_decimal if position is not None else metadata_breakout_level
+            stop_buffer = snapshot.atr_3m * self.settings.pullback_stop_buffer_atr
+            minimum_take_profit_pct = self._take_profit_move_with_trade_costs(effective_min_take_profit_pct, leverage, position)
+            minimum_stop_loss_pct = self._stop_loss_move_with_trade_costs(effective_min_stop_loss_pct, leverage, position)
+            if side == "LONG":
+                structural_stop = min(pullback_low - stop_buffer, min(snapshot.recent_low, breakout_level)) if pullback_low > 0 else snapshot.recent_low - stop_buffer
+                fixed_stop_loss = entry_price * (Decimal("1") - minimum_stop_loss_pct)
+                stop_loss_price = min(fixed_stop_loss, structural_stop)
+                stop_distance = max(Decimal("0.0001"), entry_price - stop_loss_price)
+                target_distance = max(stop_distance * self.settings.pullback_min_rr, atr_base * self.settings.pullback_target_atr_multiplier, entry_price * minimum_take_profit_pct)
+                take_profit_price = entry_price + target_distance
+                stop_loss_pct = self._cycle_net_margin_pct(position, -((Decimal("1") - (stop_loss_price / entry_price)) * Decimal(leverage)), leverage)
+            else:
+                structural_stop = max(pullback_high + stop_buffer, max(snapshot.recent_high, breakout_level)) if pullback_high > 0 else snapshot.recent_high + stop_buffer
+                fixed_stop_loss = entry_price * (Decimal("1") + minimum_stop_loss_pct)
+                stop_loss_price = max(fixed_stop_loss, structural_stop)
+                stop_distance = max(Decimal("0.0001"), stop_loss_price - entry_price)
+                target_distance = max(stop_distance * self.settings.pullback_min_rr, atr_base * self.settings.pullback_target_atr_multiplier, entry_price * minimum_take_profit_pct)
+                take_profit_price = entry_price - target_distance
+                stop_loss_pct = self._cycle_net_margin_pct(position, -(((stop_loss_price / entry_price) - Decimal("1")) * Decimal(leverage)), leverage)
+            take_profit_pct = self._cycle_net_margin_pct(
+                position,
+                (((take_profit_price / entry_price) - Decimal("1")) * Decimal(leverage)) if side == "LONG" else ((Decimal("1") - (take_profit_price / entry_price)) * Decimal(leverage)),
+                leverage,
+            )
+            return (
+                take_profit_price.quantize(Decimal("0.0001")),
+                stop_loss_price.quantize(Decimal("0.0001")),
+                take_profit_pct.quantize(Decimal("0.0001")),
+                stop_loss_pct.quantize(Decimal("0.0001")),
+            )
+
         if side == "SHORT":
             if snapshot.volume_ratio >= Decimal("1.8") or volatility_ratio >= Decimal("0.0035"):
                 stop_atr_multiplier = Decimal("0.58")
@@ -577,6 +646,11 @@ class RiskMixin:
                 commission_usdt=position.commission_usdt,
                 last_exit_update_at=refreshed_at,
                 last_trade_sync_at=position.last_trade_sync_at,
+                entry_type=position.entry_type,
+                breakout_level=position.breakout_level,
+                pullback_low=position.pullback_low,
+                pullback_high=position.pullback_high,
+                invalidation_deadline_ms=position.invalidation_deadline_ms,
                 trend_follow_armed=position.trend_follow_armed,
                 entry_count=position.entry_count,
                 exit_count=position.exit_count,
@@ -619,6 +693,11 @@ class RiskMixin:
                 commission_usdt=position.commission_usdt,
                 last_exit_update_at=refreshed_at,
                 last_trade_sync_at=position.last_trade_sync_at,
+                entry_type=position.entry_type,
+                breakout_level=position.breakout_level,
+                pullback_low=position.pullback_low,
+                pullback_high=position.pullback_high,
+                invalidation_deadline_ms=position.invalidation_deadline_ms,
                 trend_follow_armed=position.trend_follow_armed,
                 entry_count=position.entry_count,
                 exit_count=position.exit_count,
@@ -653,6 +732,11 @@ class RiskMixin:
             commission_usdt=position.commission_usdt,
             last_exit_update_at=refreshed_at,
             last_trade_sync_at=position.last_trade_sync_at,
+            entry_type=position.entry_type,
+            breakout_level=position.breakout_level,
+            pullback_low=position.pullback_low,
+            pullback_high=position.pullback_high,
+            invalidation_deadline_ms=position.invalidation_deadline_ms,
             trend_follow_armed=position.trend_follow_armed,
             entry_count=position.entry_count,
             exit_count=position.exit_count,

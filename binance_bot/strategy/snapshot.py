@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from decimal import Decimal
+from typing import Any
 
 from binance_bot.market_data import MarketDataProvider
 from binance_bot.services.binance_futures_service import AccountSnapshot
@@ -39,6 +40,11 @@ class MarketSnapshot:
     breakout_low: Decimal
     trend_long_ok: bool
     trend_short_ok: bool
+    latest_close_time_ms: int = 0
+    recent_closes_1m: tuple[Decimal, ...] = ()
+    recent_highs_window_1m: tuple[Decimal, ...] = ()
+    recent_lows_window_1m: tuple[Decimal, ...] = ()
+    recent_volumes_1m: tuple[Decimal, ...] = ()
 
     @property
     def preferred_side(self) -> str | None:
@@ -59,6 +65,13 @@ def build_market_snapshot(
     ask_price: Decimal,
     bid_price: Decimal,
 ) -> MarketSnapshot:
+    def _close_time_ms(row: dict[str, Any]) -> int:
+        value = row.get("close_time", row.get("open_time", 0))
+        return int(value)
+
+    def _decimal_tuple(rows: list[dict[str, Any]], key: str) -> tuple[Decimal, ...]:
+        return tuple(Decimal(str(row[key])) for row in rows)
+
     closes_1m = [row["close"] for row in klines_1m]
     highs_1m = [row["high"] for row in klines_1m]
     lows_1m = [row["low"] for row in klines_1m]
@@ -139,6 +152,11 @@ def build_market_snapshot(
         breakout_low=breakout_low,
         trend_long_ok=trend_long_ok,
         trend_short_ok=trend_short_ok,
+        latest_close_time_ms=_close_time_ms(klines_1m[-1]),
+        recent_closes_1m=_decimal_tuple(klines_1m, "close"),
+        recent_highs_window_1m=_decimal_tuple(klines_1m, "high"),
+        recent_lows_window_1m=_decimal_tuple(klines_1m, "low"),
+        recent_volumes_1m=_decimal_tuple(klines_1m, "volume"),
     )
 
 

@@ -92,6 +92,12 @@ python -m binance_bot.backtest run --symbols BTCUSDT --start 2025-01-01 --end 20
 
 --debug-decisions를 켜면 decision_log.jsonl이 생성된다.
 
+추가 분석 스크립트:
+
+```bash
+python scripts/analyze_decisions.py reports/backtests/20260508T000000Z
+```
+
 주요 필드:
 
 - timestamp
@@ -99,12 +105,17 @@ python -m binance_bot.backtest run --symbols BTCUSDT --start 2025-01-01 --end 20
 - price
 - market_regime
 - trend_direction
+- preferred_side
+- entry_type_candidate
 - long_score
 - short_score
+- score_threshold
+- score_edge
 - entry_side
 - entry_allowed
 - entry_reason
 - entry_detail_reasons
+- entry_blockers
 - exit_allowed
 - exit_reason
 - exit_detail_reasons
@@ -119,20 +130,56 @@ python -m binance_bot.backtest run --symbols BTCUSDT --start 2025-01-01 --end 20
 - volume_ratio
 - breakout_high
 - breakout_low
+- latest_close_1m
+- previous_close_1m
+- breakout_chase_candidate
+- pullback_reaccel_candidate
+- pullback_valid
+- reaccel_valid
+- trend_alignment_ok
+- volume_ok
+- rsi_ok
+- not_chasing_ok
+- quantity_ok
 - recent_high
 - recent_low
 - position_state
 
-entry_allowed가 false면 진입 후보는 있었더라도 score, momentum, split, quantity 조건에서 차단된 상태일 수 있다. exit_allowed가 false면 당시 캔들 기준으로 기존 전략의 청산 조건이 성립하지 않은 것이다.
+entry_allowed가 false면 진입 후보는 있었더라도 score, momentum, split, quantity 조건에서 차단된 상태일 수 있다. entry_type_candidate와 entry_blockers를 같이 보면 breakout chase가 막힌 것인지, pullback 재가속 후보가 있었는데 reaccel이나 RR에서 탈락한 것인지 바로 분리할 수 있다. exit_allowed가 false면 당시 캔들 기준으로 기존 전략의 청산 조건이 성립하지 않은 것이다.
 
 ## 리포트 파일 설명
 
 - summary.json: 총 손익, 승률, profit factor, max drawdown 등 요약 지표
 - trades.csv: 개별 체결 결과
+- trades.csv에는 entry_reason 컬럼이 포함되어 breakout_chase_long, pullback_reaccel_short 같은 진입 유형별 집계가 가능하다.
 - equity_curve.csv: 시점별 balance, equity, drawdown
 - daily_pnl.csv: 일자별 순손익
 - config.json: 실행 설정
 - decision_log.jsonl: 디버그 decision trace, 기본 off
+
+## 백테스트 비교 스크립트
+
+```bash
+python scripts/compare_backtests.py reports/backtests/run_a reports/backtests/run_b reports/backtests/run_c
+```
+
+이 스크립트는 각 리포트 디렉터리에서 다음 정보를 읽어 한 줄씩 비교한다.
+
+- trade_count
+- net_pnl
+- max_drawdown_pct
+- win_rate
+- profit_factor
+- entry_type_counts
+- exit_reason_counts
+
+## 실험 배치 실행
+
+```bash
+python scripts/run_strategy_experiments.py --symbols BTCUSDT --start 2026-04-01 --end 2026-04-30 --output-dir reports/strategy_experiments
+```
+
+기본 variant는 baseline, pullback_conservative, pullback_balanced, pullback_aggressive 이다. 각 variant는 pullback 재가속 관련 env override만 바꾸고 같은 백테스트 엔진을 재사용한다.
 
 ## 현재 한계점
 

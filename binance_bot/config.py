@@ -53,6 +53,24 @@ class Settings:
     entry_min_volume_ratio: Decimal
     long_entry_min_rsi_3m: Decimal
     short_entry_max_rsi_3m: Decimal
+    pullback_reaccel_enabled: bool
+    pullback_lookback_candles: int
+    pullback_max_depth_atr: Decimal
+    pullback_min_depth_atr: Decimal
+    pullback_retest_buffer_atr: Decimal
+    pullback_reaccel_volume_ratio: Decimal
+    pullback_reaccel_min_score: int
+    pullback_reaccel_rsi_long_min: Decimal
+    pullback_reaccel_rsi_long_max: Decimal
+    pullback_reaccel_rsi_short_min: Decimal
+    pullback_reaccel_rsi_short_max: Decimal
+    pullback_stop_buffer_atr: Decimal
+    pullback_min_rr: Decimal
+    pullback_target_atr_multiplier: Decimal
+    pullback_breakeven_after_r: Decimal
+    pullback_trail_after_r: Decimal
+    near_target_fade_progress: Decimal
+    pullback_near_target_fade_progress: Decimal
     sideways_trade_enabled: bool
     sideways_max_volume_ratio: Decimal
     sideways_take_profit_on_margin_pct: Decimal
@@ -119,6 +137,24 @@ def load_settings() -> Settings:
         entry_min_volume_ratio=_to_decimal(os.getenv("BINANCE_FUTURES_ENTRY_MIN_VOLUME_RATIO"), "1.15"),
         long_entry_min_rsi_3m=_to_decimal(os.getenv("BINANCE_FUTURES_LONG_ENTRY_MIN_RSI_3M"), "58"),
         short_entry_max_rsi_3m=_to_decimal(os.getenv("BINANCE_FUTURES_SHORT_ENTRY_MAX_RSI_3M"), "44"),
+        pullback_reaccel_enabled=_to_bool(os.getenv("BINANCE_FUTURES_PULLBACK_REACCEL_ENABLED"), True),
+        pullback_lookback_candles=max(5, _to_int(os.getenv("BINANCE_FUTURES_PULLBACK_LOOKBACK_CANDLES"), 20)),
+        pullback_max_depth_atr=_to_decimal(os.getenv("BINANCE_FUTURES_PULLBACK_MAX_DEPTH_ATR"), "0.90"),
+        pullback_min_depth_atr=_to_decimal(os.getenv("BINANCE_FUTURES_PULLBACK_MIN_DEPTH_ATR"), "0.15"),
+        pullback_retest_buffer_atr=_to_decimal(os.getenv("BINANCE_FUTURES_PULLBACK_RETEST_BUFFER_ATR"), "0.25"),
+        pullback_reaccel_volume_ratio=_to_decimal(os.getenv("BINANCE_FUTURES_PULLBACK_REACCEL_VOLUME_RATIO"), "0.95"),
+        pullback_reaccel_min_score=_to_int(os.getenv("BINANCE_FUTURES_PULLBACK_REACCEL_MIN_SCORE"), 5),
+        pullback_reaccel_rsi_long_min=_to_decimal(os.getenv("BINANCE_FUTURES_PULLBACK_REACCEL_RSI_LONG_MIN"), "48"),
+        pullback_reaccel_rsi_long_max=_to_decimal(os.getenv("BINANCE_FUTURES_PULLBACK_REACCEL_RSI_LONG_MAX"), "66"),
+        pullback_reaccel_rsi_short_min=_to_decimal(os.getenv("BINANCE_FUTURES_PULLBACK_REACCEL_RSI_SHORT_MIN"), "34"),
+        pullback_reaccel_rsi_short_max=_to_decimal(os.getenv("BINANCE_FUTURES_PULLBACK_REACCEL_RSI_SHORT_MAX"), "52"),
+        pullback_stop_buffer_atr=_to_decimal(os.getenv("BINANCE_FUTURES_PULLBACK_STOP_BUFFER_ATR"), "0.25"),
+        pullback_min_rr=_to_decimal(os.getenv("BINANCE_FUTURES_PULLBACK_MIN_RR"), "1.50"),
+        pullback_target_atr_multiplier=_to_decimal(os.getenv("BINANCE_FUTURES_PULLBACK_TARGET_ATR_MULTIPLIER"), "1.20"),
+        pullback_breakeven_after_r=_to_decimal(os.getenv("BINANCE_FUTURES_PULLBACK_BREAKEVEN_AFTER_R"), "0.80"),
+        pullback_trail_after_r=_to_decimal(os.getenv("BINANCE_FUTURES_PULLBACK_TRAIL_AFTER_R"), "1.20"),
+        near_target_fade_progress=_to_decimal(os.getenv("BINANCE_FUTURES_NEAR_TARGET_FADE_PROGRESS"), "0.18"),
+        pullback_near_target_fade_progress=_to_decimal(os.getenv("BINANCE_FUTURES_PULLBACK_NEAR_TARGET_FADE_PROGRESS"), "0.45"),
         sideways_trade_enabled=_to_bool(os.getenv("BINANCE_FUTURES_SIDEWAYS_TRADE_ENABLED"), True),
         sideways_max_volume_ratio=_to_decimal(os.getenv("BINANCE_FUTURES_SIDEWAYS_MAX_VOLUME_RATIO"), "1.10"),
         sideways_take_profit_on_margin_pct=_to_decimal(os.getenv("BINANCE_FUTURES_SIDEWAYS_TAKE_PROFIT_ON_MARGIN_PCT"), "0.0035"),

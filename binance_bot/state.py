@@ -25,6 +25,11 @@ class Position:
     commission_usdt: str = "0"
     last_exit_update_at: str = ""
     last_trade_sync_at: str = ""
+    entry_type: str = "breakout_chase"
+    breakout_level: str = "0"
+    pullback_low: str = "0"
+    pullback_high: str = "0"
+    invalidation_deadline_ms: int = 0
     trend_follow_armed: bool = False
     entry_count: int = 1
     exit_count: int = 0
@@ -68,6 +73,18 @@ class Position:
     @property
     def commission_usdt_decimal(self) -> Decimal:
         return Decimal(self.commission_usdt)
+
+    @property
+    def breakout_level_decimal(self) -> Decimal:
+        return Decimal(self.breakout_level)
+
+    @property
+    def pullback_low_decimal(self) -> Decimal:
+        return Decimal(self.pullback_low)
+
+    @property
+    def pullback_high_decimal(self) -> Decimal:
+        return Decimal(self.pullback_high)
 
     @property
     def has_exit_lines(self) -> bool:

@@ -11,6 +11,8 @@ from .snapshot import MarketSnapshot
 
 class ExitMixin:
     def _has_breakout_failure_exit(self, snapshot: MarketSnapshot, position: Position) -> bool:
+        if position.entry_type.startswith("pullback_reaccel"):
+            return False
         entry_buffer = snapshot.atr_3m * Decimal("0.60")
         if position.side == "LONG":
             lost_breakout = (
@@ -52,20 +54,45 @@ class ExitMixin:
     def _has_near_target_fade_exit(self, snapshot: MarketSnapshot, position: Position, current_price: Decimal, net_pnl: Decimal) -> bool:
         if net_pnl < Decimal("0.0005"):
             return False
+        progress_threshold = self.settings.pullback_near_target_fade_progress if position.entry_type.startswith("pullback_reaccel") else self.settings.near_target_fade_progress
         if position.side == "LONG":
             target_span = position.take_profit_price_decimal - position.entry_price_decimal
             if target_span <= 0:
                 return False
             progress = (current_price - position.entry_price_decimal) / target_span
             momentum_faded = snapshot.ema_fast_1m <= snapshot.ema_slow_1m or snapshot.long_score <= snapshot.short_score + 1 or snapshot.rsi_3m < Decimal("58")
-            return progress >= Decimal("0.18") and momentum_faded
+            return progress >= progress_threshold and momentum_faded
 
         target_span = position.entry_price_decimal - position.take_profit_price_decimal
         if target_span <= 0:
             return False
         progress = (position.entry_price_decimal - current_price) / target_span
         momentum_faded = snapshot.ema_fast_1m >= snapshot.ema_slow_1m or snapshot.short_score <= snapshot.long_score + 1 or snapshot.rsi_3m > Decimal("42")
-        return progress >= Decimal("0.18") and momentum_faded
+        return progress >= progress_threshold and momentum_faded
+
+    def _has_pullback_invalidation_exit(self, snapshot: MarketSnapshot, position: Position, current_price: Decimal, net_pnl: Decimal) -> bool:
+        if not position.entry_type.startswith("pullback_reaccel"):
+            return False
+        risk_distance = (
+            position.entry_price_decimal - position.stop_loss_price_decimal
+            if position.side == "LONG"
+            else position.stop_loss_price_decimal - position.entry_price_decimal
+        )
+        if risk_distance <= 0:
+            return False
+        current_r = (
+            (current_price - position.entry_price_decimal) / risk_distance
+            if position.side == "LONG"
+            else (position.entry_price_decimal - current_price) / risk_distance
+        )
+        if position.side == "LONG":
+            structure_broken = position.pullback_low_decimal > 0 and snapshot.latest_close_1m < position.pullback_low_decimal
+            momentum_failed = snapshot.ema_fast_1m <= snapshot.ema_slow_1m or snapshot.rsi_3m < self.settings.pullback_reaccel_rsi_long_min
+        else:
+            structure_broken = position.pullback_high_decimal > 0 and snapshot.latest_close_1m > position.pullback_high_decimal
+            momentum_failed = snapshot.ema_fast_1m >= snapshot.ema_slow_1m or snapshot.rsi_3m > self.settings.pullback_reaccel_rsi_short_max
+        stalled = position.invalidation_deadline_ms > 0 and snapshot.latest_close_time_ms >= position.invalidation_deadline_ms and current_r < Decimal("0.35") and net_pnl <= Decimal("0.0010")
+        return structure_broken or (stalled and momentum_failed)
 
     def _is_strong_short_trend(self, snapshot: MarketSnapshot) -> bool:
         threshold = self._entry_score_threshold_for_side("SHORT")
@@ -106,8 +133,9 @@ class ExitMixin:
 
         near_target_fade_exit = self._has_near_target_fade_exit(snapshot, position, current_price, net_pnl)
         breakout_failure_exit = self._has_breakout_failure_exit(snapshot, position)
+        pullback_invalidation_exit = self._has_pullback_invalidation_exit(snapshot, position, current_price, net_pnl)
 
-        if not take_hit and not stop_hit and not near_target_fade_exit and not breakout_failure_exit:
+        if not take_hit and not stop_hit and not near_target_fade_exit and not breakout_failure_exit and not pullback_invalidation_exit:
             return PlanDecision(allowed=False, reason="hold")
 
         requested_exit_quantity = self._resolve_exit_quantity(position)
@@ -129,6 +157,13 @@ class ExitMixin:
                 f"net_pnl={self._format_decimal(net_pnl * Decimal('100'), '0.00')}%",
                 f"rsi_1m={self._format_decimal(snapshot.rsi_1m, '0.00')}",
                 f"rsi_3m={self._format_decimal(snapshot.rsi_3m, '0.00')}",
+            ]
+        elif pullback_invalidation_exit and not take_hit and not stop_hit:
+            reason = "pullback_invalidation"
+            detail_reasons = [
+                f"net_pnl={self._format_decimal(net_pnl * Decimal('100'), '0.00')}%",
+                f"pullback_low={self._format_decimal(position.pullback_low_decimal, '0.0000')}",
+                f"pullback_high={self._format_decimal(position.pullback_high_decimal, '0.0000')}",
             ]
         else:
             reason = "take_profit" if take_hit else "stop_loss"
@@ -205,6 +240,11 @@ class ExitMixin:
                 commission_usdt=position.commission_usdt_decimal,
                 last_exit_update_at=position.last_exit_update_at,
                 last_trade_sync_at=position.last_trade_sync_at,
+                entry_type=position.entry_type,
+                breakout_level=position.breakout_level_decimal,
+                pullback_low=position.pullback_low_decimal,
+                pullback_high=position.pullback_high_decimal,
+                invalidation_deadline_ms=position.invalidation_deadline_ms,
             )
             self.state_store.set(updated)
             self.logger.info(

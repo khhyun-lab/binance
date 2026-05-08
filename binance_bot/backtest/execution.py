@@ -29,6 +29,7 @@ class SimulatedPosition:
     entry_time: int
     entry_fee: Decimal
     entry_slippage_cost: Decimal
+    entry_reason: str
     take_profit_price: Decimal
     stop_loss_price: Decimal
 
@@ -47,6 +48,7 @@ class TradeRecord:
     slippage_cost: Decimal
     net_pnl: Decimal
     return_on_margin: Decimal
+    entry_reason: str
     exit_reason: str
     holding_seconds: int
 
@@ -184,6 +186,7 @@ class FuturesExecutionSimulator:
                 entry_time=candle.open_time,
                 entry_fee=fee,
                 entry_slippage_cost=slippage_cost,
+                entry_reason=order.reason,
                 take_profit_price=Decimal("0"),
                 stop_loss_price=Decimal("0"),
             )
@@ -235,6 +238,7 @@ class FuturesExecutionSimulator:
             slippage_cost=slippage_cost,
             net_pnl=net_pnl,
             return_on_margin=Decimal("0") if position.margin_usdt <= 0 else (net_pnl / position.margin_usdt) * Decimal("100"),
+            entry_reason=position.entry_reason,
             exit_reason=reason,
             holding_seconds=max(0, (timestamp - position.entry_time) // 1000),
         )

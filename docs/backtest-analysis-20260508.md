@@ -23,6 +23,31 @@
 | v8 | reports/backtests_202604_v8/20260507T145811Z | 3 | -19.3131 | 점수 임계값 완화 시도, 실제 결과 변화 없음 |
 | v9 | reports/backtests_202604_v9/20260507T150801Z | 6 | -49.0019 | 거래량 기준 완화로 거래 수 증가, 성과 크게 악화 |
 
+## pullback 재가속 실험
+
+2026-05-08에 pullback 재가속 진입 구조를 추가한 뒤 동일한 2026-04 BTCUSDT 조건으로 variant 실험을 다시 수행했다.
+
+| variant | 리포트 경로 | 거래 수 | 순손익 | 최대 낙폭 | 진입 유형 | 비고 |
+| --- | --- | ---: | ---: | ---: | --- | --- |
+| baseline | reports/strategy_experiments_202604/baseline/20260508T075659Z | 6 | -15.7599 | 3.4074 | breakout_chase_long 4, breakout_chase_short 2 | 기존 breakout만 체결 |
+| pullback_conservative | reports/strategy_experiments_202604/pullback_conservative/20260508T080359Z | 6 | -15.7599 | 3.4074 | breakout_chase_long 4, breakout_chase_short 2 | baseline과 완전 동일 |
+| pullback_balanced | reports/strategy_experiments_202604/pullback_balanced/20260508T081057Z | 6 | -15.7599 | 3.4074 | breakout_chase_long 4, breakout_chase_short 2 | baseline과 완전 동일 |
+| pullback_aggressive | reports/strategy_experiments_202604/pullback_aggressive/20260508T081755Z | 6 | -15.7599 | 3.4074 | breakout_chase_long 4, breakout_chase_short 2 | baseline과 완전 동일 |
+
+### decision log 요약
+
+pullback_balanced variant의 decision log를 analyze_decisions.py로 집계한 결과는 다음과 같다.
+
+- 전체 row: 41900
+- entry_type_candidate: pullback_reaccel_long 484, pullback_reaccel_short 259
+- pullback_candidate_rows: 743
+- pullback_valid_rows: 280
+- reaccel_valid_rows: 315
+- pullback_min_rr_blocked: 4
+- 실제 체결: breakout_chase_long 4, breakout_chase_short 2
+
+즉, pullback 후보 자체는 존재했지만 실제 주문으로 이어질 만큼 구조적 RR과 재가속 조건을 동시에 만족한 케이스는 없었다. 현재 구현은 거래 수를 무리하게 늘리지 않으면서도, 0건 문제를 진단할 수 있는 후보/차단 사유를 decision log에 남기는 단계까지는 도달했다.
+
 ## 핵심 해석
 
 ### 1. baseline 대비 큰 개선은 있었지만 아직 수익 전략은 아님
@@ -51,12 +76,14 @@
 
 ## 현재 결론
 
-- 현재 best-known 상태는 v6 기준이다.
+- 2026-04 월간 실험 기준 현재 best-known 상태는 여전히 v6 계열이다.
+- 새 pullback 재가속 구조는 아직 체결 기여를 만들지 못했고, 결과적으로 baseline과 동일한 거래/손익을 기록했다.
 - 채택한 방향:
   - 멀티타임프레임 정렬 기반 진입 강화
   - 추격 진입 억제
   - 과열 롱 진입 억제
   - breakout_failure와 near_target_fade를 포함한 보수적 청산
+  - pullback 후보와 blocker를 decision log에 남기는 진단 구조 추가
 - 기각한 방향:
   - 롱 breakout_failure 완화
   - 진입 점수 임계값 단순 하향
@@ -69,8 +96,9 @@
 다음 실험 우선순위:
 
 1. 돌파 직후 추격형만 허용하지 말고, 돌파 후 첫 눌림 뒤 재가속 진입 타입을 별도 추가
-2. 현재 전략을 저빈도 추세추종형으로 인정할지, 단타형으로 유지할지 전략 성격을 먼저 확정
-3. breakout_failure 이전에 진입 품질을 더 정교하게 판별할 수 있는 눌림 구조 점수 추가
+2. pullback 후보 743건 중 실제 체결 0건이 된 병목을 RR, reaccel, volume 조건 중 어디서 더 많이 잃는지 추가 분해
+3. 현재 전략을 저빈도 추세추종형으로 인정할지, 단타형으로 유지할지 전략 성격을 먼저 확정
+4. breakout_failure 이전에 진입 품질을 더 정교하게 판별할 수 있는 눌림 구조 점수 추가
 
 ## 운영 판단
 

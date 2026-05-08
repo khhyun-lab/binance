@@ -26,6 +26,7 @@ class StrategyAction:
     margin_usdt: Decimal
     reason: str
     snapshot: MarketSnapshot
+    metadata: dict[str, str | int | bool | list[str]]
 
 
 @dataclass(slots=True)
@@ -35,12 +36,17 @@ class DecisionLog:
     price: str
     market_regime: str
     trend_direction: str
+    preferred_side: str
+    entry_type_candidate: str
     long_score: int
     short_score: int
+    score_threshold: int
+    score_edge: int
     entry_side: str
     entry_allowed: bool
     entry_reason: str
     entry_detail_reasons: list[str]
+    entry_blockers: list[str]
     exit_allowed: bool
     exit_reason: str
     exit_detail_reasons: list[str]
@@ -55,6 +61,17 @@ class DecisionLog:
     volume_ratio: str
     breakout_high: str
     breakout_low: str
+    latest_close_1m: str
+    previous_close_1m: str
+    breakout_chase_candidate: bool
+    pullback_reaccel_candidate: bool
+    pullback_valid: bool
+    reaccel_valid: bool
+    trend_alignment_ok: bool
+    volume_ok: bool
+    rsi_ok: bool
+    not_chasing_ok: bool
+    quantity_ok: bool
     recent_high: str
     recent_low: str
     position_state: dict[str, str | int | bool]
@@ -146,12 +163,17 @@ class BacktestStrategyAdapter(SnapshotMixin, RegimeMixin, RiskMixin, EntryMixin,
             price=self._format_decimal(snapshot.mark_price, "0.0000"),
             market_regime=confirmed_regime,
             trend_direction=self._trend_direction(snapshot),
+            preferred_side=str(entry_decision.metadata.get("preferred_side", snapshot.preferred_side or "NONE")),
+            entry_type_candidate=str(entry_decision.metadata.get("entry_type_candidate", "none")),
             long_score=snapshot.long_score,
             short_score=snapshot.short_score,
+            score_threshold=int(entry_decision.metadata.get("score_threshold", 0)),
+            score_edge=int(entry_decision.metadata.get("score_edge", 0)),
             entry_side=(entry_decision.plan.position_side if entry_decision.plan is not None else (snapshot.preferred_side or "NONE")),
             entry_allowed=entry_decision.allowed,
             entry_reason=entry_decision.reason,
             entry_detail_reasons=entry_decision.detail_reasons,
+            entry_blockers=list(entry_decision.metadata.get("entry_blockers", [])),
             exit_allowed=exit_decision.allowed,
             exit_reason=exit_decision.reason,
             exit_detail_reasons=exit_decision.detail_reasons,
@@ -166,6 +188,17 @@ class BacktestStrategyAdapter(SnapshotMixin, RegimeMixin, RiskMixin, EntryMixin,
             volume_ratio=self._format_decimal(snapshot.volume_ratio, "0.00"),
             breakout_high=self._format_decimal(snapshot.breakout_high, "0.0000"),
             breakout_low=self._format_decimal(snapshot.breakout_low, "0.0000"),
+            latest_close_1m=self._format_decimal(snapshot.latest_close_1m, "0.0000"),
+            previous_close_1m=self._format_decimal(snapshot.previous_close_1m, "0.0000"),
+            breakout_chase_candidate=bool(entry_decision.metadata.get("breakout_chase_candidate", False)),
+            pullback_reaccel_candidate=bool(entry_decision.metadata.get("pullback_reaccel_candidate", False)),
+            pullback_valid=bool(entry_decision.metadata.get("pullback_valid", False)),
+            reaccel_valid=bool(entry_decision.metadata.get("reaccel_valid", False)),
+            trend_alignment_ok=bool(entry_decision.metadata.get("trend_alignment_ok", False)),
+            volume_ok=bool(entry_decision.metadata.get("volume_ok", False)),
+            rsi_ok=bool(entry_decision.metadata.get("rsi_ok", False)),
+            not_chasing_ok=bool(entry_decision.metadata.get("not_chasing_ok", False)),
+            quantity_ok=bool(entry_decision.metadata.get("quantity_ok", False)),
             recent_high=self._format_decimal(snapshot.recent_high, "0.0000"),
             recent_low=self._format_decimal(snapshot.recent_low, "0.0000"),
             position_state=self._position_state_payload(current_position),
@@ -183,6 +216,7 @@ class BacktestStrategyAdapter(SnapshotMixin, RegimeMixin, RiskMixin, EntryMixin,
             margin_usdt=plan.margin_usdt,
             reason=plan.reason,
             snapshot=snapshot,
+            metadata=plan.metadata,
         )
 
     def _trend_direction(self, snapshot: MarketSnapshot) -> str:
@@ -206,7 +240,7 @@ class BacktestStrategyAdapter(SnapshotMixin, RegimeMixin, RiskMixin, EntryMixin,
         }
 
     def on_entry_fill(self, action: StrategyAction, fill_price: Decimal, quantity: Decimal, timestamp: int) -> Position:
-        take_profit_price, stop_loss_price, take_profit_pct, stop_loss_pct = self._calculate_exit_lines(action.snapshot, action.side, fill_price, self.settings.leverage)
+        take_profit_price, stop_loss_price, take_profit_pct, stop_loss_pct = self._calculate_exit_lines(action.snapshot, action.side, fill_price, self.settings.leverage, entry_metadata=action.metadata)
         position = self._build_position(
             symbol=action.symbol,
             side=action.side,
@@ -223,6 +257,11 @@ class BacktestStrategyAdapter(SnapshotMixin, RegimeMixin, RiskMixin, EntryMixin,
             stop_loss_pct=stop_loss_pct,
             entry_count=1,
             exit_count=0,
+            entry_type=str(action.metadata.get("entry_type", action.reason)),
+            breakout_level=Decimal(str(action.metadata.get("breakout_level", "0"))),
+            pullback_low=Decimal(str(action.metadata.get("pullback_low", "0"))),
+            pullback_high=Decimal(str(action.metadata.get("pullback_high", "0"))),
+            invalidation_deadline_ms=int(action.metadata.get("invalidation_deadline_ms", 0)),
         )
         self.state_store.set(position)
         return position
@@ -234,7 +273,7 @@ class BacktestStrategyAdapter(SnapshotMixin, RegimeMixin, RiskMixin, EntryMixin,
         total_quantity = position.quantity_decimal + quantity
         total_notional = position.notional_usdt_decimal + (quantity * fill_price)
         average_entry = total_notional / total_quantity
-        take_profit_price, stop_loss_price, take_profit_pct, stop_loss_pct = self._calculate_exit_lines(action.snapshot, action.side, average_entry, position.leverage)
+        take_profit_price, stop_loss_price, take_profit_pct, stop_loss_pct = self._calculate_exit_lines(action.snapshot, action.side, average_entry, position.leverage, position)
         updated = self._build_position(
             symbol=position.symbol,
             side=position.side,
@@ -255,6 +294,11 @@ class BacktestStrategyAdapter(SnapshotMixin, RegimeMixin, RiskMixin, EntryMixin,
             commission_usdt=position.commission_usdt_decimal,
             last_exit_update_at=self._now_utc().isoformat(),
             last_trade_sync_at=position.last_trade_sync_at,
+            entry_type=position.entry_type,
+            breakout_level=position.breakout_level_decimal,
+            pullback_low=position.pullback_low_decimal,
+            pullback_high=position.pullback_high_decimal,
+            invalidation_deadline_ms=position.invalidation_deadline_ms,
         )
         self.state_store.set(updated)
         return updated

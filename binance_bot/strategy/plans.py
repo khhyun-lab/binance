@@ -15,6 +15,7 @@ class StrategyOrderPlan:
     reason: str
     detail_reasons: list[str] = field(default_factory=list)
     score_display: str = ""
+    metadata: dict[str, str | int | bool | list[str]] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -23,3 +24,4 @@ class PlanDecision:
     reason: str
     detail_reasons: list[str] = field(default_factory=list)
     plan: StrategyOrderPlan | None = None
+    metadata: dict[str, str | int | bool | list[str]] = field(default_factory=dict)

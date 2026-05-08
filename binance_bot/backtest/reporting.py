@@ -40,7 +40,7 @@ def write_backtest_report(
 def _write_trades_csv(path: Path, trades: list[TradeRecord]) -> None:
     with path.open("w", encoding="utf-8", newline="") as handle:
         writer = csv.writer(handle)
-        writer.writerow(["entry_time", "exit_time", "symbol", "side", "quantity", "entry_price", "exit_price", "gross_pnl", "fees", "slippage_cost", "net_pnl", "return_on_margin", "exit_reason", "holding_seconds"])
+        writer.writerow(["entry_time", "exit_time", "symbol", "side", "quantity", "entry_price", "exit_price", "gross_pnl", "fees", "slippage_cost", "net_pnl", "return_on_margin", "entry_reason", "exit_reason", "holding_seconds"])
         for trade in trades:
             writer.writerow([
                 trade.entry_time,
@@ -55,6 +55,7 @@ def _write_trades_csv(path: Path, trades: list[TradeRecord]) -> None:
                 str(trade.slippage_cost),
                 str(trade.net_pnl),
                 str(trade.return_on_margin),
+                trade.entry_reason,
                 trade.exit_reason,
                 trade.holding_seconds,
             ])
