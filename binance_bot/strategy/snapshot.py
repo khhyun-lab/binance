@@ -16,6 +16,12 @@ class MarketSnapshot:
     mark_price: Decimal
     ask_price: Decimal
     bid_price: Decimal
+    latest_close_1m: Decimal
+    previous_close_1m: Decimal
+    previous_high_1m: Decimal
+    previous_low_1m: Decimal
+    recent_three_highs_1m: tuple[Decimal, Decimal, Decimal]
+    recent_three_lows_1m: tuple[Decimal, Decimal, Decimal]
     ema_fast_1m: Decimal
     ema_slow_1m: Decimal
     long_score: int
@@ -110,6 +116,12 @@ def build_market_snapshot(
         mark_price=mark_price,
         ask_price=ask_price,
         bid_price=bid_price,
+        latest_close_1m=closes_1m[-1],
+        previous_close_1m=closes_1m[-2],
+        previous_high_1m=highs_1m[-2],
+        previous_low_1m=lows_1m[-2],
+        recent_three_highs_1m=(highs_1m[-3], highs_1m[-2], highs_1m[-1]),
+        recent_three_lows_1m=(lows_1m[-3], lows_1m[-2], lows_1m[-1]),
         ema_fast_1m=ema9_1m,
         ema_slow_1m=ema21_1m,
         long_score=long_score,

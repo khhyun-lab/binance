@@ -12,6 +12,12 @@ from .snapshot import MarketSnapshot
 
 
 class EntryMixin:
+    def _is_chasing_breakout(self, snapshot: MarketSnapshot, side: str) -> bool:
+        max_extension = snapshot.atr_3m * Decimal("0.35")
+        if side == "LONG":
+            return snapshot.mark_price > snapshot.breakout_high + max_extension
+        return snapshot.mark_price < snapshot.breakout_low - max_extension
+
     def _entry_score_threshold_for_side(self, side: str) -> int:
         if side == "SHORT":
             return self.settings.short_entry_score_threshold
@@ -51,76 +57,78 @@ class EntryMixin:
         return breakout_pressure and momentum_pressure and oversold_pressure and volume_pressure
 
     def _get_crash_short_signal(self, snapshot: MarketSnapshot) -> tuple[str, list[str]] | None:
-        if not self._is_crash_short_context(snapshot):
-            return None
-        self._mark_recent_crash_context(snapshot)
-        return (
-            "SHORT",
-            [
-                "급락선행숏",
-                f"short_score={snapshot.short_score}",
-                f"rsi_1m={self._format_decimal(snapshot.rsi_1m, '0.00')}",
-                f"volume={self._format_decimal(snapshot.volume_ratio, '0.00')}",
-            ],
-        )
+        return None
 
     def _get_rebound_long_signal(self, snapshot: MarketSnapshot) -> tuple[str, list[str]] | None:
-        if not self._has_recent_crash_context(snapshot.symbol):
-            return None
-        if self._is_crash_short_context(snapshot):
-            return None
-        if snapshot.trend_short_ok and snapshot.short_score > snapshot.long_score + 1:
-            return None
-        rebound_ready = (
-            snapshot.ema_fast_1m > snapshot.ema_slow_1m
-            and snapshot.long_score >= 2
-            and snapshot.rsi_1m >= Decimal("22")
-            and snapshot.rsi_1m <= Decimal("48")
-            and snapshot.rsi_3m >= Decimal("28")
-            and snapshot.volume_ratio >= Decimal("0.40")
-            and snapshot.mark_price >= (snapshot.recent_low + (snapshot.atr_3m * Decimal("0.20")))
-        )
-        if not rebound_ready:
-            return None
+        return None
+
+    def _has_breakout_confirmation(self, snapshot: MarketSnapshot, side: str) -> bool:
+        if side == "LONG":
+            high1, high2, high3 = snapshot.recent_three_highs_1m
+            return (
+                snapshot.previous_close_1m >= snapshot.breakout_high
+                and snapshot.latest_close_1m >= snapshot.breakout_high
+                and snapshot.previous_low_1m >= snapshot.ema_slow_1m
+                and high1 < high2 < high3
+            )
+
+        low1, low2, low3 = snapshot.recent_three_lows_1m
         return (
-            "LONG",
-            [
-                "급락후반등롱",
-                f"long_score={snapshot.long_score}",
-                f"rsi_1m={self._format_decimal(snapshot.rsi_1m, '0.00')}",
-                f"volume={self._format_decimal(snapshot.volume_ratio, '0.00')}",
-            ],
+            snapshot.previous_close_1m <= snapshot.breakout_low
+            and snapshot.latest_close_1m <= snapshot.breakout_low
+            and low1 > low2 > low3
+        )
+
+    def _is_mtf_breakout_ready(self, snapshot: MarketSnapshot, side: str) -> bool:
+        if side == "LONG":
+            return (
+                snapshot.trend_long_ok
+                and snapshot.mark_price >= snapshot.breakout_high
+                and not self._is_chasing_breakout(snapshot, "LONG")
+                and self._has_breakout_confirmation(snapshot, "LONG")
+                and snapshot.ema_fast_1m > snapshot.ema_slow_1m
+                and snapshot.mark_price >= snapshot.ema_fast_1m
+                and Decimal("58") <= snapshot.rsi_3m <= Decimal("69")
+                and snapshot.volume_ratio >= max(self.settings.entry_min_volume_ratio, Decimal("1.35"))
+            )
+        return (
+            snapshot.trend_short_ok
+            and snapshot.mark_price <= snapshot.breakout_low
+            and not self._is_chasing_breakout(snapshot, "SHORT")
+            and self._has_breakout_confirmation(snapshot, "SHORT")
+            and snapshot.ema_fast_1m < snapshot.ema_slow_1m
+            and snapshot.mark_price <= snapshot.ema_fast_1m
+            and Decimal("31") <= snapshot.rsi_3m <= Decimal("44")
+            and snapshot.volume_ratio >= max(self.settings.entry_min_volume_ratio, Decimal("1.35"))
         )
 
     def _has_entry_momentum(self, snapshot: MarketSnapshot, side: str) -> bool:
         threshold = self._entry_score_threshold_for_side(side)
         if side == "LONG":
             conditions = [
-                snapshot.mark_price >= snapshot.breakout_high,
-                snapshot.volume_ratio >= self.settings.entry_min_volume_ratio,
+                self._is_mtf_breakout_ready(snapshot, "LONG"),
                 snapshot.rsi_3m >= self.settings.long_entry_min_rsi_3m,
                 snapshot.long_score >= threshold + 1,
             ]
             score_edge_ok = snapshot.long_score >= snapshot.short_score + 2
-            return snapshot.trend_long_ok and score_edge_ok and snapshot.ema_fast_1m > snapshot.ema_slow_1m and sum(1 for condition in conditions if condition) >= self.settings.entry_momentum_min_conditions
+            return score_edge_ok and sum(1 for condition in conditions if condition) >= self.settings.entry_momentum_min_conditions
 
         conditions = [
-            snapshot.mark_price <= snapshot.breakout_low,
-            snapshot.volume_ratio >= self.settings.entry_min_volume_ratio,
+            self._is_mtf_breakout_ready(snapshot, "SHORT"),
             snapshot.rsi_3m <= self.settings.short_entry_max_rsi_3m,
             snapshot.short_score >= threshold + 1,
         ]
-        score_edge_ok = snapshot.short_score >= snapshot.long_score + 2
-        return snapshot.trend_short_ok and score_edge_ok and snapshot.ema_fast_1m < snapshot.ema_slow_1m and sum(1 for condition in conditions if condition) >= self.settings.entry_momentum_min_conditions
+        score_edge_ok = snapshot.short_score >= snapshot.long_score + 3
+        return score_edge_ok and sum(1 for condition in conditions if condition) >= self.settings.entry_momentum_min_conditions
 
     def _is_exhausted_entry(self, snapshot: MarketSnapshot, side: str) -> bool:
         if side == "LONG":
-            return (snapshot.rsi_3m >= Decimal("72") and not snapshot.trend_long_ok) or (
+            return snapshot.rsi_1m >= Decimal("74") or snapshot.rsi_3m >= Decimal("70") or (
                 snapshot.rsi_3m >= Decimal("68")
-                and snapshot.volume_ratio >= Decimal("1.80")
+                and snapshot.volume_ratio >= Decimal("2.00")
                 and snapshot.mark_price >= snapshot.breakout_high
             )
-        return snapshot.rsi_3m <= Decimal("28") and not snapshot.trend_short_ok
+        return snapshot.rsi_1m <= Decimal("28") or snapshot.rsi_3m <= Decimal("30")
 
     def _can_scale_in_position(self, snapshot: MarketSnapshot, position: Position) -> bool:
         if position.side == "LONG":
@@ -129,8 +137,8 @@ class EntryMixin:
             exhaustion_ok = snapshot.rsi_3m <= Decimal("68") and snapshot.volume_ratio <= Decimal("2.50")
         else:
             price_ok = snapshot.mark_price <= position.entry_price_decimal
-            trend_ok = snapshot.trend_short_ok and snapshot.short_score >= self._entry_score_threshold_for_side("SHORT") + 1 and snapshot.ema_fast_1m < snapshot.ema_slow_1m
-            exhaustion_ok = snapshot.rsi_1m >= Decimal("24") and snapshot.rsi_3m >= Decimal("34") and snapshot.volume_ratio >= Decimal("0.90")
+            trend_ok = self._is_mtf_breakout_ready(snapshot, "SHORT") and snapshot.short_score >= self._entry_score_threshold_for_side("SHORT") + 1
+            exhaustion_ok = Decimal("30") <= snapshot.rsi_3m <= Decimal("46") and snapshot.rsi_1m >= Decimal("30")
         return price_ok and trend_ok and exhaustion_ok
 
     async def _plan_scale_in(self, snapshot: MarketSnapshot, account_snapshot: AccountSnapshot, position: Position) -> PlanDecision:
@@ -184,26 +192,15 @@ class EntryMixin:
         if len(self.state_store.positions) >= self.settings.max_open_positions:
             return PlanDecision(allowed=False, reason="max_open_positions")
 
-        crash_short_signal = self._get_crash_short_signal(snapshot)
-        rebound_long_signal = None if crash_short_signal is not None else self._get_rebound_long_signal(snapshot)
+        if self._is_sideways_regime(snapshot):
+            return PlanDecision(allowed=False, reason="sideways_blocked")
+
         preferred_side = snapshot.preferred_side
         preferred_reasons: list[str] = []
-        score_display = "range"
+        score_display = "0/0"
         reason = "signal"
-        if crash_short_signal is not None:
-            preferred_side, preferred_reasons = crash_short_signal
-            score_display = "crash"
-            reason = "crash_short"
-        elif rebound_long_signal is not None:
-            preferred_side, preferred_reasons = rebound_long_signal
-            score_display = "rebound"
-            reason = "rebound_long"
-        elif preferred_side is None:
-            sideways_signal = self._get_sideways_entry_signal(snapshot)
-            if sideways_signal is None:
-                return PlanDecision(allowed=False, reason="no_signal")
-            preferred_side, preferred_reasons = sideways_signal
-            reason = "sideways"
+        if preferred_side is None:
+            return PlanDecision(allowed=False, reason="no_signal")
         else:
             preferred_score = snapshot.long_score if preferred_side == "LONG" else snapshot.short_score
             preferred_reasons = snapshot.long_reasons if preferred_side == "LONG" else snapshot.short_reasons
@@ -212,19 +209,9 @@ class EntryMixin:
             if self._is_exhausted_entry(snapshot, preferred_side):
                 return PlanDecision(allowed=False, reason="exhausted_entry", detail_reasons=preferred_reasons)
             if preferred_score < score_threshold:
-                sideways_signal = self._get_sideways_entry_signal(snapshot)
-                if sideways_signal is None:
-                    return PlanDecision(allowed=False, reason="score_below_threshold", detail_reasons=preferred_reasons)
-                preferred_side, preferred_reasons = sideways_signal
-                score_display = "range"
-                reason = "sideways"
+                return PlanDecision(allowed=False, reason="score_below_threshold", detail_reasons=preferred_reasons)
             elif not self._has_entry_momentum(snapshot, preferred_side):
-                sideways_signal = self._get_sideways_entry_signal(snapshot)
-                if sideways_signal is None:
-                    return PlanDecision(allowed=False, reason="momentum_blocked", detail_reasons=preferred_reasons)
-                preferred_side, preferred_reasons = sideways_signal
-                score_display = "range"
-                reason = "sideways"
+                return PlanDecision(allowed=False, reason="momentum_blocked", detail_reasons=preferred_reasons)
 
         available_margin, quantity, effective_remaining_splits = await self._resolve_entry_order_plan(
             snapshot.symbol,
@@ -249,7 +236,7 @@ class EntryMixin:
                 margin_usdt=available_margin,
                 reason=reason,
                 detail_reasons=preferred_reasons,
-                score_display=f"1/{effective_remaining_splits}" if score_display == "range" else score_display,
+                score_display=score_display,
             ),
         )
 

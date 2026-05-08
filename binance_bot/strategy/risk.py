@@ -289,32 +289,18 @@ class RiskMixin:
 
     def _effective_exit_target_bounds(self, snapshot: MarketSnapshot, side: str) -> tuple[Decimal, Decimal, Decimal, Decimal]:
         if side == "SHORT":
-            if self._is_strong_short_trend(snapshot):
-                return (
-                    self.settings.short_min_take_profit_on_margin_pct,
-                    self.settings.short_max_take_profit_on_margin_pct,
-                    self.settings.short_min_stop_loss_on_margin_pct,
-                    self.settings.short_max_stop_loss_on_margin_pct,
-                )
             return (
-                max(self.settings.short_min_take_profit_on_margin_pct, Decimal("0.030")),
-                min(self.settings.short_max_take_profit_on_margin_pct, Decimal("0.050")),
-                max(self.settings.short_min_stop_loss_on_margin_pct, Decimal("0.020")),
-                min(self.settings.short_max_stop_loss_on_margin_pct, Decimal("0.030")),
+                self.settings.short_min_take_profit_on_margin_pct,
+                self.settings.short_max_take_profit_on_margin_pct,
+                self.settings.short_min_stop_loss_on_margin_pct,
+                self.settings.short_max_stop_loss_on_margin_pct,
             )
 
-        if self._is_strong_long_trend(snapshot):
-            return (
-                self.settings.min_take_profit_on_margin_pct,
-                self.settings.max_take_profit_on_margin_pct,
-                self.settings.min_stop_loss_on_margin_pct,
-                self.settings.max_stop_loss_on_margin_pct,
-            )
         return (
-            max(self.settings.min_take_profit_on_margin_pct, Decimal("0.030")),
-            min(self.settings.max_take_profit_on_margin_pct, Decimal("0.050")),
-            max(self.settings.min_stop_loss_on_margin_pct, Decimal("0.020")),
-            min(self.settings.max_stop_loss_on_margin_pct, Decimal("0.030")),
+            self.settings.min_take_profit_on_margin_pct,
+            self.settings.max_take_profit_on_margin_pct,
+            self.settings.min_stop_loss_on_margin_pct,
+            self.settings.max_stop_loss_on_margin_pct,
         )
 
     def _build_exit_line_update_reasons(
@@ -471,66 +457,32 @@ class RiskMixin:
             effective_min_stop_loss_pct,
             effective_max_stop_loss_pct,
         ) = self._effective_exit_target_bounds(snapshot, side)
-        if self._is_sideways_regime(snapshot) and position is None:
-            take_profit_move = self._take_profit_move_with_trade_costs(self.settings.sideways_take_profit_on_margin_pct, leverage, position)
-            stop_loss_move = self._stop_loss_move_with_trade_costs(self.settings.sideways_stop_loss_on_margin_pct, leverage, position)
-            if side == "LONG":
-                take_profit_price = entry_price * (Decimal("1") + take_profit_move)
-                stop_loss_price = max(entry_price * (Decimal("1") - stop_loss_move), snapshot.recent_low - (atr_fast * Decimal("0.05")))
-                take_profit_pct = self._cycle_net_margin_pct(position, ((take_profit_price / entry_price) - Decimal("1")) * Decimal(leverage), leverage)
-                stop_loss_pct = self._cycle_net_margin_pct(position, ((stop_loss_price / entry_price) - Decimal("1")) * Decimal(leverage), leverage)
-            else:
-                take_profit_price = entry_price * (Decimal("1") - take_profit_move)
-                stop_loss_price = min(entry_price * (Decimal("1") + stop_loss_move), snapshot.recent_high + (atr_fast * Decimal("0.05")))
-                take_profit_pct = self._cycle_net_margin_pct(position, ((Decimal("1") - (take_profit_price / entry_price)) * Decimal(leverage)), leverage)
-                stop_loss_pct = self._cycle_net_margin_pct(position, -(((stop_loss_price / entry_price) - Decimal("1")) * Decimal(leverage)), leverage)
-
-            sideways_target_take_profit_pct = max(self.settings.sideways_take_profit_on_margin_pct, abs(stop_loss_pct) * self.settings.exit_reward_risk_ratio)
-            take_profit_price, take_profit_pct = self._take_profit_price_from_target_pct(side, entry_price, leverage, position, sideways_target_take_profit_pct)
-
-            target_net_usdt = self._margin_pct_to_usdt(position.margin_usdt_decimal, take_profit_pct) if position is not None else Decimal("0")
-            stop_net_usdt = self._margin_pct_to_usdt(position.margin_usdt_decimal, stop_loss_pct) if position is not None else Decimal("0")
-
-            self.logger.info(
-                "[BINANCE EXIT MODEL] symbol=%s side=%s mode=SIDEWAYS_SCALP atr_fast=%s atr_slow=%s volume_ratio=%s target_net_pct=%s target_net_usdt=%s stop_net_pct=%s stop_net_usdt=%s realized_pct=%s paid_fee_pct=%s",
-                snapshot.symbol,
-                side,
-                self._format_decimal(atr_fast),
-                self._format_decimal(atr_slow),
-                self._format_decimal(snapshot.volume_ratio),
-                self._format_decimal(take_profit_pct * Decimal('100'), '0.00'),
-                self._format_decimal(target_net_usdt, '0.0000'),
-                self._format_decimal(stop_loss_pct * Decimal('100'), '0.00'),
-                self._format_decimal(stop_net_usdt, '0.0000'),
-                self._format_decimal(realized_margin_pct * Decimal('100'), '0.00'),
-                self._format_decimal(paid_fee_margin_pct * Decimal('100'), '0.00'),
-            )
-            return (
-                take_profit_price.quantize(Decimal("0.0001")),
-                stop_loss_price.quantize(Decimal("0.0001")),
-                take_profit_pct.quantize(Decimal("0.0001")),
-                stop_loss_pct.quantize(Decimal("0.0001")),
-            )
-
         if side == "SHORT":
             if snapshot.volume_ratio >= Decimal("1.8") or volatility_ratio >= Decimal("0.0035"):
-                stop_atr_multiplier = Decimal("0.62")
-                take_profit_atr_multiplier = Decimal("0.78")
+                stop_atr_multiplier = Decimal("0.58")
+                take_profit_atr_multiplier = Decimal("0.60")
             elif snapshot.volume_ratio >= Decimal("1.2") or volatility_ratio >= Decimal("0.0023"):
-                stop_atr_multiplier = Decimal("0.54")
-                take_profit_atr_multiplier = Decimal("0.68")
+                stop_atr_multiplier = Decimal("0.52")
+                take_profit_atr_multiplier = Decimal("0.54")
             else:
-                stop_atr_multiplier = Decimal("0.48")
-                take_profit_atr_multiplier = Decimal("0.58")
+                stop_atr_multiplier = Decimal("0.46")
+                take_profit_atr_multiplier = Decimal("0.48")
         elif snapshot.volume_ratio >= Decimal("1.8") or volatility_ratio >= Decimal("0.0035"):
-            stop_atr_multiplier = Decimal("0.85")
-            take_profit_atr_multiplier = Decimal("1.25")
+            stop_atr_multiplier = Decimal("0.86")
+            take_profit_atr_multiplier = Decimal("0.78")
         elif snapshot.volume_ratio >= Decimal("1.2") or volatility_ratio >= Decimal("0.0023"):
-            stop_atr_multiplier = Decimal("0.72")
-            take_profit_atr_multiplier = Decimal("1.05")
+            stop_atr_multiplier = Decimal("0.76")
+            take_profit_atr_multiplier = Decimal("0.70")
         else:
-            stop_atr_multiplier = Decimal("0.58")
-            take_profit_atr_multiplier = Decimal("0.88")
+            stop_atr_multiplier = Decimal("0.66")
+            take_profit_atr_multiplier = Decimal("0.60")
+
+        if side == "LONG" and snapshot.rsi_3m >= Decimal("68"):
+            stop_atr_multiplier = max(Decimal("0.40"), stop_atr_multiplier - Decimal("0.08"))
+            take_profit_atr_multiplier = max(Decimal("0.62"), take_profit_atr_multiplier - Decimal("0.12"))
+        if side == "SHORT" and snapshot.rsi_3m <= Decimal("32"):
+            stop_atr_multiplier = max(Decimal("0.32"), stop_atr_multiplier - Decimal("0.08"))
+            take_profit_atr_multiplier = max(Decimal("0.48"), take_profit_atr_multiplier - Decimal("0.10"))
 
         minimum_take_profit_pct = self._take_profit_move_with_trade_costs(effective_min_take_profit_pct, leverage, position)
         maximum_take_profit_pct = self._take_profit_move_with_trade_costs(effective_max_take_profit_pct, leverage, position)

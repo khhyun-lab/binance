@@ -10,6 +10,35 @@ from .snapshot import MarketSnapshot
 
 
 class ExitMixin:
+    def _has_breakout_failure_exit(self, snapshot: MarketSnapshot, position: Position) -> bool:
+        entry_buffer = snapshot.atr_3m * Decimal("0.60")
+        if position.side == "LONG":
+            lost_breakout = (
+                snapshot.previous_close_1m < snapshot.breakout_high
+                and snapshot.latest_close_1m < snapshot.breakout_high
+            )
+            adverse_move_confirmed = snapshot.mark_price <= position.entry_price_decimal - entry_buffer
+            momentum_failed = (
+                snapshot.ema_fast_1m <= snapshot.ema_slow_1m
+                or snapshot.mark_price < snapshot.ema_slow_1m
+                or snapshot.rsi_1m <= Decimal("38")
+                or snapshot.rsi_3m <= Decimal("45")
+            )
+            return lost_breakout and adverse_move_confirmed and momentum_failed
+
+        lost_breakout = (
+            snapshot.previous_close_1m > snapshot.breakout_low
+            and snapshot.latest_close_1m > snapshot.breakout_low
+        )
+        adverse_move_confirmed = snapshot.mark_price >= position.entry_price_decimal + entry_buffer
+        momentum_failed = (
+            snapshot.ema_fast_1m >= snapshot.ema_slow_1m
+            or snapshot.mark_price > snapshot.ema_slow_1m
+            or snapshot.rsi_1m >= Decimal("62")
+            or snapshot.rsi_3m >= Decimal("55")
+        )
+        return lost_breakout and adverse_move_confirmed and momentum_failed
+
     def _has_reverse_exit_confirmation(self, snapshot: MarketSnapshot, position: Position, preferred_side: str | None, reverse_score: int) -> bool:
         if preferred_side is None or preferred_side == position.side:
             return False
@@ -29,14 +58,14 @@ class ExitMixin:
                 return False
             progress = (current_price - position.entry_price_decimal) / target_span
             momentum_faded = snapshot.ema_fast_1m <= snapshot.ema_slow_1m or snapshot.long_score <= snapshot.short_score + 1 or snapshot.rsi_3m < Decimal("58")
-            return progress >= Decimal("0.30") and momentum_faded
+            return progress >= Decimal("0.18") and momentum_faded
 
         target_span = position.entry_price_decimal - position.take_profit_price_decimal
         if target_span <= 0:
             return False
         progress = (position.entry_price_decimal - current_price) / target_span
         momentum_faded = snapshot.ema_fast_1m >= snapshot.ema_slow_1m or snapshot.short_score <= snapshot.long_score + 1 or snapshot.rsi_3m > Decimal("42")
-        return progress >= Decimal("0.30") and momentum_faded
+        return progress >= Decimal("0.18") and momentum_faded
 
     def _is_strong_short_trend(self, snapshot: MarketSnapshot) -> bool:
         threshold = self._entry_score_threshold_for_side("SHORT")
@@ -61,95 +90,49 @@ class ExitMixin:
         return (not snapshot.trend_long_ok) or score_bent or micro_bent
 
     async def _plan_exit(self, snapshot: MarketSnapshot, position: Position) -> PlanDecision:
-        preferred_side = snapshot.preferred_side
-        reverse_score = snapshot.long_score if preferred_side == "LONG" else snapshot.short_score
-        reverse_reasons = snapshot.long_reasons if preferred_side == "LONG" else snapshot.short_reasons
-        crash_short_signal = self._get_crash_short_signal(snapshot)
-        rebound_long_signal = self._get_rebound_long_signal(snapshot)
-        if position.side == "LONG" and crash_short_signal is not None:
-            preferred_side = "SHORT"
-            reverse_score = max(reverse_score, snapshot.short_score)
-            reverse_reasons = crash_short_signal[1]
-        elif position.side == "SHORT" and rebound_long_signal is not None:
-            preferred_side = "LONG"
-            reverse_score = max(reverse_score, snapshot.long_score)
-            reverse_reasons = rebound_long_signal[1]
-
-        reverse_signal_hit = self._has_reverse_exit_confirmation(snapshot, position, preferred_side, reverse_score)
         current_price = snapshot.bid_price if position.side == "LONG" else snapshot.ask_price
-        trend_follow_exit = False
-        near_target_fade_exit = False
         if position.side == "LONG":
             gross_pnl = ((current_price - position.entry_price_decimal) / position.entry_price_decimal) * Decimal(position.leverage)
             net_pnl = self._cycle_net_margin_pct(position, gross_pnl, position.leverage)
             take_hit = current_price >= position.take_profit_price_decimal
             stop_hit = current_price <= position.stop_loss_price_decimal
             order_side = "SELL"
-            if take_hit and self._is_strong_long_trend(snapshot) and not position.trend_follow_armed:
-                position = Position(
-                    symbol=position.symbol,
-                    side=position.side,
-                    quantity=position.quantity,
-                    entry_price=position.entry_price,
-                    order_id=position.order_id,
-                    opened_at=position.opened_at,
-                    leverage=position.leverage,
-                    margin_usdt=position.margin_usdt,
-                    notional_usdt=position.notional_usdt,
-                    take_profit_price=position.take_profit_price,
-                    stop_loss_price=position.stop_loss_price,
-                    take_profit_pct=position.take_profit_pct,
-                    stop_loss_pct=position.stop_loss_pct,
-                    realized_pnl_usdt=position.realized_pnl_usdt,
-                    commission_usdt=position.commission_usdt,
-                    last_exit_update_at=position.last_exit_update_at,
-                    last_trade_sync_at=position.last_trade_sync_at,
-                    trend_follow_armed=True,
-                    entry_count=position.entry_count,
-                    exit_count=position.exit_count,
-                )
-                self.state_store.set(position)
-            if position.trend_follow_armed:
-                if self._is_long_trend_bent(snapshot):
-                    trend_follow_exit = True
-                    take_hit = False
-                else:
-                    take_hit = False
-            if not take_hit and not stop_hit and not trend_follow_exit:
-                near_target_fade_exit = self._has_near_target_fade_exit(snapshot, position, current_price, net_pnl)
         else:
             gross_pnl = ((position.entry_price_decimal - current_price) / position.entry_price_decimal) * Decimal(position.leverage)
             net_pnl = self._cycle_net_margin_pct(position, gross_pnl, position.leverage)
             take_hit = current_price <= position.take_profit_price_decimal
             stop_hit = current_price >= position.stop_loss_price_decimal
             order_side = "BUY"
-            if not take_hit and not stop_hit:
-                near_target_fade_exit = self._has_near_target_fade_exit(snapshot, position, current_price, net_pnl)
 
-        if not take_hit and not stop_hit and not reverse_signal_hit and not trend_follow_exit and not near_target_fade_exit:
+        near_target_fade_exit = self._has_near_target_fade_exit(snapshot, position, current_price, net_pnl)
+        breakout_failure_exit = self._has_breakout_failure_exit(snapshot, position)
+
+        if not take_hit and not stop_hit and not near_target_fade_exit and not breakout_failure_exit:
             return PlanDecision(allowed=False, reason="hold")
 
-        requested_exit_quantity = position.quantity_decimal if (trend_follow_exit or near_target_fade_exit) else self._resolve_exit_quantity(position)
+        requested_exit_quantity = self._resolve_exit_quantity(position)
         exit_quantity = await self._resolve_effective_exit_quantity(position, requested_exit_quantity)
         if exit_quantity <= 0:
             return PlanDecision(allowed=False, reason="exit_quantity_zero")
 
-        if reverse_signal_hit:
-            reason = f"reverse:{preferred_side}"
-            detail_reasons = reverse_reasons
-        elif near_target_fade_exit:
-            reason = "fade_exit"
+        if near_target_fade_exit and not take_hit and not stop_hit:
+            reason = "near_target_fade"
             detail_reasons = [
                 f"net_pnl={self._format_decimal(net_pnl * Decimal('100'), '0.00')}%",
-                f"ema_fast={self._format_decimal(snapshot.ema_fast_1m, '0.0000')}",
-                f"ema_slow={self._format_decimal(snapshot.ema_slow_1m, '0.0000')}",
+                f"long_score={snapshot.long_score}",
+                f"short_score={snapshot.short_score}",
+                f"rsi_3m={self._format_decimal(snapshot.rsi_3m, '0.00')}",
             ]
-        elif trend_follow_exit:
-            reason = "trend_bent"
-            detail_reasons = []
+        elif breakout_failure_exit and not take_hit and not stop_hit:
+            reason = "breakout_failure"
+            detail_reasons = [
+                f"net_pnl={self._format_decimal(net_pnl * Decimal('100'), '0.00')}%",
+                f"rsi_1m={self._format_decimal(snapshot.rsi_1m, '0.00')}",
+                f"rsi_3m={self._format_decimal(snapshot.rsi_3m, '0.00')}",
+            ]
         else:
             reason = "take_profit" if take_hit else "stop_loss"
-            detail_reasons = []
+            detail_reasons = [f"net_pnl={self._format_decimal(net_pnl * Decimal('100'), '0.00')}%"]
 
         return PlanDecision(
             allowed=True,
@@ -201,7 +184,7 @@ class ExitMixin:
         exit_reason = plan.reason
         exit_reason_details = plan.detail_reasons
         exit_split_count = position.exit_count + 1
-        if remaining_quantity > 0 and exit_split_count < self.settings.exit_splits and plan.reason not in {"trend_bent", "fade_exit"}:
+        if remaining_quantity > 0 and exit_split_count < self.settings.exit_splits:
             updated = self._build_position(
                 symbol=position.symbol,
                 side=position.side,

@@ -138,3 +138,8 @@ binance_bot/
     binance_futures_service.py
 watchdog.py
 ```
+
+## 문서
+
+- 백테스트 가이드: docs/backtesting.md
+- 최근 백테스트 분석: docs/backtest-analysis-20260508.md

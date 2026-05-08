@@ -23,38 +23,48 @@ def build_market_scores(
 
     if trend_long_ok:
         long_score += 2
-        long_reasons.append("5분/15분하모니상승+2")
+        long_reasons.append("15분/5분상승정렬+2")
     if trend_short_ok:
         short_score += 2
-        short_reasons.append("5분/15분하모니하락+2")
-    if mark_price >= breakout_high:
+        short_reasons.append("15분/5분하락정렬+2")
+    if trend_long_ok and mark_price >= breakout_high:
         long_score += 2
-        long_reasons.append("30봉상단돌파+2")
-    if mark_price <= breakout_low:
+        long_reasons.append("1분상단돌파+2")
+    if trend_short_ok and mark_price <= breakout_low:
         short_score += 2
-        short_reasons.append("30봉하단이탈+2")
+        short_reasons.append("1분하단돌파+2")
     if ema_fast_1m > ema_slow_1m and latest_close_1m > ema_fast_1m:
         long_score += 1
-        long_reasons.append("1분추세복원+1")
+        long_reasons.append("1분추세유지+1")
     if ema_fast_1m < ema_slow_1m and latest_close_1m < ema_fast_1m:
         short_score += 1
         short_reasons.append("1분추세약세+1")
-    if Decimal("50") <= rsi_1m <= Decimal("67"):
+    if Decimal("52") <= rsi_1m <= Decimal("68"):
         long_score += 1
-        long_reasons.append("RSI롱영역+1")
-    if Decimal("33") <= rsi_1m <= Decimal("50"):
+        long_reasons.append("1분RSI확장+1")
+    if Decimal("36") <= rsi_1m <= Decimal("48"):
         short_score += 1
-        short_reasons.append("RSI숏영역+1")
-    if volume_ratio >= Decimal("1.15"):
+        short_reasons.append("1분RSI하락확인+1")
+    if volume_ratio >= Decimal("1.00"):
         long_score += 1
         short_score += 1
-        long_reasons.append("거래량확대+1")
-        short_reasons.append("거래량확대+1")
+        long_reasons.append("돌파거래량확인+1")
+        short_reasons.append("돌파거래량확인+1")
     if latest_close_1m > previous_close_1m:
         long_score += 1
         long_reasons.append("직전봉상승+1")
     if latest_close_1m < previous_close_1m:
         short_score += 1
         short_reasons.append("직전봉하락+1")
+
+    if not trend_long_ok and long_score > 0:
+        long_score = max(0, long_score - 1)
+        long_reasons.append("상위추세미정렬-1")
+    if not trend_short_ok and short_score > 0:
+        short_score = max(0, short_score - 2)
+        short_reasons.append("상위추세미정렬-2")
+    if rsi_1m < Decimal("30") and short_score > 0:
+        short_score = max(0, short_score - 2)
+        short_reasons.append("과매도숏억제-2")
 
     return long_score, short_score, long_reasons, short_reasons
